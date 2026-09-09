@@ -1,0 +1,62 @@
+name: Dependency Build Caching Demo
+
+# Trigger manually so you can fire the SAME workflow twice in a row
+# from the Actions tab without needing two separate commits.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # NOTE: intentionally NOT using setup-node's built-in cache here,
+          # so the actions/cache step below is the one doing (and showing) the work.
+
+      - name: Restore npm dependency cache
+        id: npm-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          # Cache key is derived from the hash of package-lock.json.
+          # Same lockfile -> same key -> cache HIT on run #2.
+          # Any dependency change -> new hash -> new key -> cache MISS.
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Report cache status
+        run: |
+          echo "Cache hit: ${{ steps.npm-cache.outputs.cache-hit }}"
+          if [ "${{ steps.npm-cache.outputs.cache-hit }}" == "true" ]; then
+            echo "::notice::CACHE HIT — restored ~/.npm from a previous run, skipping fresh downloads"
+          else
+            echo "::notice::CACHE MISS — no matching key found, npm will fetch packages fresh"
+          fi
+
+      - name: Install dependencies (timed)
+        run: |
+          echo "install_start=$(date +%s%3N)" >> "$GITHUB_ENV"
+          npm ci
+          echo "install_end=$(date +%s%3N)" >> "$GITHUB_ENV"
+
+      - name: Print install duration
+        run: |
+          duration_ms=$((install_end - install_start))
+          echo "npm ci took ${duration_ms} ms"
+          echo "### Dependency install time: ${duration_ms} ms" >> "$GITHUB_STEP_SUMMARY"
+          echo "Cache hit: ${{ steps.npm-cache.outputs.cache-hit }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
